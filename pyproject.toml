@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fi-be"
+version = "0.1.0"
+description = "FI backend API with JWT auth and user management"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "pydantic-settings>=2.6.0",
+    "pydantic[email]>=2.9.0",
+    "PyJWT>=2.9.0",
+    "bcrypt>=4.2.0",
+    "python-multipart>=0.0.12",
+    "pymysql>=1.1.1",
+    "cryptography>=43.0.0",
+    "google-generativeai>=0.7.0",
+    "chromadb>=0.5.0",
+    "pdfplumber>=0.11.0",
+    "sentence-transformers>=3.0.0",
+    "langchain>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-community>=0.3.0",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "httpx>=0.27.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
