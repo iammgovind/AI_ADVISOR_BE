@@ -1,3 +1,4 @@
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -22,15 +23,31 @@ from app.services.statement_parser import parse_statement, suggest_category
 router = APIRouter(prefix="/expenses/statement", tags=["statement"])
 
 
-def _match_account(db: Session, user_id, account_number: str | None) -> BankAccount | None:
-    """Find a pre-registered account whose number matches (last 4 digits or full)."""
-    if not account_number:
+def _match_account(db: Session, user_id, account_number: str | None, bank_name: str | None) -> BankAccount | None:
+    """Match pre-registered account by last 4 digits, or fallback by bank name."""
+    accounts = list(db.scalars(select(BankAccount).where(BankAccount.user_id == user_id)).all())
+    if not accounts:
         return None
-    accounts = db.scalars(select(BankAccount).where(BankAccount.user_id == user_id)).all()
-    for acc in accounts:
-        # match last 4 digits or full number
-        if acc.account_number[-4:] == account_number[-4:]:
-            return acc
+
+    # 1. exact last-4 digit match (strip all non-digits first)
+    if account_number:
+        digits_from_statement = re.sub(r"\D", "", account_number)
+        for acc in accounts:
+            digits_registered = re.sub(r"\D", "", acc.account_number)
+            if len(digits_from_statement) >= 4 and len(digits_registered) >= 4:
+                if digits_registered[-4:] == digits_from_statement[-4:]:
+                    return acc
+
+    # 2. fallback: match by bank name if only one account registered for that bank
+    if bank_name:
+        bank_matches = [a for a in accounts if bank_name.lower() in a.bank_name.lower() or a.bank_name.lower() in bank_name.lower()]
+        if len(bank_matches) == 1:
+            return bank_matches[0]
+
+    # 3. fallback: if user has only one registered account, match it
+    if len(accounts) == 1:
+        return accounts[0]
+
     return None
 
 
@@ -59,7 +76,7 @@ async def upload_statement(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No debit transactions found in statement")
 
     # account verification
-    matched = _match_account(db, current_user.id, account_info.get("account_number"))
+    matched = _match_account(db, current_user.id, account_info.get("account_number"), account_info.get("bank_name"))
 
     # save upload record
     upload = StatementUpload(
