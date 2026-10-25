@@ -10,54 +10,72 @@ from app.models.expense import ExpenseCategory
 # ---------------------------------------------------------------------------
 # Category keyword map (Indian context)
 # ---------------------------------------------------------------------------
-_CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[str]]] = [
+# (keyword, whole_word_only) — whole_word=True uses \b to avoid false matches
+_CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[tuple[str, bool]]]] = [
     (ExpenseCategory.food, [
-        "swiggy", "zomato", "hotel", "restaurant", "cafe", "food", "kitchen",
-        "dhaba", "biryani", "pizza", "burger", "bakery", "canteen", "mess",
-        "dominos", "kfc", "mcdonalds", "subway", "haldirams", "barbeque",
-        "eatery", "diner", "snacks", "juice", "tea", "coffee", "starbucks",
+        ("swiggy", False), ("zomato", False), ("restaurant", False), ("cafe", False),
+        ("kitchen", False), ("dhaba", False), ("biryani", False), ("pizza", False),
+        ("burger", False), ("bakery", False), ("canteen", False), ("dominos", False),
+        ("kfc", True), ("mcdonalds", False), ("subway", False), ("haldirams", False),
+        ("barbeque", False), ("eatery", False), ("diner", False), ("starbucks", False),
+        ("foodcourt", False), ("tiffin", False), ("hotel", True),
     ]),
     (ExpenseCategory.transport, [
-        "uber", "ola", "rapido", "petrol", "fuel", "metro", "bus", "railway",
-        "irctc", "redbus", "makemytrip", "goibibo", "indigo", "spicejet",
-        "airindia", "cab", "auto", "toll", "parking", "diesel",
+        ("uber", False), ("ola", True), ("rapido", False), ("petrol", False),
+        ("fuel", False), ("metro", False), ("irctc", False), ("redbus", False),
+        ("makemytrip", False), ("goibibo", False), ("indigo", False), ("spicejet", False),
+        ("airindia", False), ("fastag", False), ("diesel", False), ("railway", False),
+        ("parking", False), ("tollway", False), ("rapido", False),
     ]),
     (ExpenseCategory.shopping, [
-        "amazon", "flipkart", "myntra", "meesho", "ajio", "nykaa", "snapdeal",
-        "mall", "store", "shop", "market", "retail", "bigbasket", "blinkit",
-        "zepto", "grofers", "dmart", "reliance", "tata", "croma", "vijay sales",
+        ("amazon", False), ("flipkart", False), ("myntra", False), ("meesho", False),
+        ("ajio", False), ("nykaa", False), ("snapdeal", False), ("bigbasket", False),
+        ("blinkit", False), ("zepto", False), ("grofers", False), ("dmart", False),
+        ("croma", False), ("vijaysales", False), ("shopify", False),
     ]),
     (ExpenseCategory.entertainment, [
-        "netflix", "spotify", "pvr", "inox", "bookmyshow", "hotstar", "disney",
-        "youtube", "prime", "zee5", "sonyliv", "game", "gaming", "steam",
-        "playstation", "xbox", "concert", "event", "ticket",
+        ("netflix", False), ("spotify", False), ("pvr", True), ("inox", False),
+        ("bookmyshow", False), ("hotstar", False), ("disney", False), ("zee5", False),
+        ("sonyliv", False), ("gaming", False), ("steam", False), ("playstation", False),
+        ("xbox", False), ("concert", False), ("youtube", False),
     ]),
     (ExpenseCategory.health, [
-        "hospital", "pharmacy", "apollo", "medplus", "doctor", "clinic",
-        "health", "med", "pharma", "diagnostic", "lab", "pathology",
-        "netmeds", "1mg", "practo", "dental", "optician", "gym", "fitness",
+        ("hospital", False), ("pharmacy", False), ("apollo", False), ("medplus", False),
+        ("doctor", False), ("clinic", False), ("pharma", False), ("diagnostic", False),
+        ("pathology", False), ("netmeds", False), ("1mg", False), ("practo", False),
+        ("dental", False), ("optician", False), ("fitness", False), ("healthkart", False),
     ]),
     (ExpenseCategory.education, [
-        "school", "college", "university", "udemy", "coursera", "fees",
-        "tuition", "book", "stationery", "byju", "unacademy", "vedantu",
-        "coaching", "institute", "library", "exam",
+        ("school", False), ("college", False), ("university", False), ("udemy", False),
+        ("coursera", False), ("tuition", False), ("stationery", False), ("byju", False),
+        ("unacademy", False), ("vedantu", False), ("coaching", False), ("institute", False),
+        ("admission", False),
     ]),
     (ExpenseCategory.housing, [
-        "rent", "electricity", "water", "gas", "maintenance", "society",
-        "broadband", "wifi", "airtel", "jio", "bsnl", "vi ", "vodafone",
-        "idea", "recharge", "bill", "insurance", "lic", "housing",
-        "property", "flat", "pg ", "hostel",
+        ("electricity", False), ("maintenance", False), ("society", False),
+        ("broadband", False), ("airtel", False), ("jio", True), ("bsnl", False),
+        ("vodafone", False), ("recharge", False), ("insurance", False),
+        ("housing", False), ("rentpay", False), ("nobroker", False),
     ]),
 ]
 
 
 def suggest_category(description: str) -> tuple[ExpenseCategory, str]:
-    """Return (category, confidence) based on description keywords."""
-    text = description.lower()
+    """Return (category, confidence) based on description keywords.
+    Splits UPI-style descriptions like UPI/SWIGGY ORDERS/REF123 into parts first.
+    """
+    # split on / - _ | to handle UPI/NEFT/POS style descriptions
+    parts = re.split(r"[/\-_|]", description.lower())
+    text = " ".join(parts)
+
     for category, keywords in _CATEGORY_KEYWORDS:
-        for kw in keywords:
-            if kw in text:
-                return category, "high"
+        for kw, whole_word in keywords:
+            if whole_word:
+                if re.search(rf"\b{re.escape(kw)}\b", text):
+                    return category, "high"
+            else:
+                if kw in text:
+                    return category, "high"
     return ExpenseCategory.other, "low"
 
 
