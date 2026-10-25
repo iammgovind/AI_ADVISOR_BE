@@ -245,6 +245,40 @@ def _parse_pdf_blocks(text: str) -> list[dict]:
     return transactions
 
 
+def _parse_whatsapp_text(text: str) -> list[dict]:
+    """Parse WhatsApp mini statement format.
+    Line 1: *DD-MM-YYYY  ₹280.000 DR*
+    Line 2: BANKCODE/MERCHANT NAME/XXXXX/upi@handle/...
+    """
+    transactions = []
+    lines = [line.strip() for line in text.splitlines()]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # match: *24-10-2026  ₹280.000 DR* (with or without * markdown)
+        header_match = re.search(
+            r"(\d{2}-\d{2}-\d{4})\s+[₹Rs.]*\s*([\d,]+\.?\d*)\s+(DR|CR)",
+            line, re.IGNORECASE,
+        )
+        if header_match:
+            txn_type = header_match.group(3).upper()
+            if txn_type == "DR":  # only debits
+                date = _parse_date(header_match.group(1))
+                amount = _clean_amount(header_match.group(2))
+                # merchant is on the next non-empty line
+                merchant = ""
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j < len(lines):
+                    merchant = _extract_merchant(lines[j])
+                if date and amount and merchant:
+                    transactions.append({"date": date, "description": merchant, "amount": amount})
+        i += 1
+    return transactions
+
+
 def _parse_simple_lines(text: str) -> list[dict]:
     """Parse single-line formats: WhatsApp mini statement, SMS, simple CSV-like text.
     Handles: Dr 250.00 / 250.00 Dr / -250.00 formats.
@@ -277,8 +311,10 @@ def _parse_simple_lines(text: str) -> list[dict]:
 
 
 def _parse_text_lines(text: str) -> list[dict]:
-    """Try PDF block parser first, fallback to simple line parser."""
-    transactions = _parse_pdf_blocks(text)
+    """Try WhatsApp format first, then PDF block format, then simple line format."""
+    transactions = _parse_whatsapp_text(text)
+    if not transactions:
+        transactions = _parse_pdf_blocks(text)
     if not transactions:
         transactions = _parse_simple_lines(text)
     return transactions
