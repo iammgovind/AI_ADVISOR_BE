@@ -9,8 +9,8 @@ from app.models.expense import ExpenseCategory
 
 # ---------------------------------------------------------------------------
 # Category keyword map (Indian context)
-# ---------------------------------------------------------------------------
 # (keyword, whole_word_only) — whole_word=True uses \b to avoid false matches
+# ---------------------------------------------------------------------------
 _CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[tuple[str, bool]]]] = [
     (ExpenseCategory.food, [
         ("swiggy", False), ("zomato", False), ("restaurant", False), ("cafe", False),
@@ -18,21 +18,22 @@ _CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[tuple[str, bool]]]] = [
         ("burger", False), ("bakery", False), ("canteen", False), ("dominos", False),
         ("kfc", True), ("mcdonalds", False), ("subway", False), ("haldirams", False),
         ("barbeque", False), ("eatery", False), ("diner", False), ("starbucks", False),
-        ("foodcourt", False), ("tiffin", False), ("hotel", True),
+        ("foodcourt", False), ("tiffin", False), ("coffee", False), ("hotel", True),
     ]),
     (ExpenseCategory.transport, [
         ("uber", False), ("ola", True), ("rapido", False), ("petrol", False),
         ("fuel", False), ("metro", False), ("irctc", False), ("redbus", False),
         ("makemytrip", False), ("goibibo", False), ("indigo", False), ("spicejet", False),
         ("airindia", False), ("fastag", False), ("diesel", False), ("railway", False),
-        ("parking", False), ("tollway", False), ("rapido", False),
+        ("parking", False), ("tollway", False),
     ]),
     (ExpenseCategory.shopping, [
         ("amazon", False), ("flipkart", False), ("myntra", False), ("meesho", False),
         ("ajio", False), ("nykaa", False), ("snapdeal", False), ("bigbasket", False),
         ("blinkit", False), ("zepto", False), ("grofers", False), ("dmart", False),
         ("croma", False), ("vijaysales", False), ("shopify", False),
-        ("stores", False), ("fancy", False), ("enterprises", False),
+        ("stores", False), ("fancy", False), ("enterprises", False), ("traders", False),
+        ("tex", False), ("textiles", False), ("plazza", False), ("plaza", False),
     ]),
     (ExpenseCategory.entertainment, [
         ("netflix", False), ("spotify", False), ("pvr", True), ("inox", False),
@@ -62,10 +63,7 @@ _CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[tuple[str, bool]]]] = [
 
 
 def suggest_category(description: str) -> tuple[ExpenseCategory, str]:
-    """Return (category, confidence) based on description keywords.
-    Splits UPI-style descriptions like UPI/SWIGGY ORDERS/REF123 into parts first.
-    """
-    # split on / - _ | to handle UPI/NEFT/POS style descriptions
+    """Return (category, confidence). Splits on / - _ | to handle UPI descriptions."""
     parts = re.split(r"[/\-_|]", description.lower())
     text = " ".join(parts)
 
@@ -81,13 +79,12 @@ def suggest_category(description: str) -> tuple[ExpenseCategory, str]:
 
 
 # ---------------------------------------------------------------------------
-# Date parsing helpers
+# Date / amount helpers
 # ---------------------------------------------------------------------------
 _DATE_FORMATS = [
     "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
     "%Y-%m-%d", "%d %b %Y", "%d %b %y", "%d%b%Y", "%d%b%y",
-    "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S",
-    "%d %B %Y",  # 02 March 2026
+    "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%d %B %Y",
 ]
 
 
@@ -110,30 +107,24 @@ def _clean_amount(raw: str) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# Extract bank/account info from text
+# Account info extraction
 # ---------------------------------------------------------------------------
 def extract_account_info(text: str) -> dict:
     info: dict = {"bank_name": None, "account_number": None, "account_holder": None}
 
-    # account number — flexible: label then optional separators then the number
-    # covers: Ac No, A/C No, Account No, Account Number, Acct No
-    # number itself: digits and X/x/* masking chars, 4-20 chars
     acc_match = re.search(
         r"(?:a/?c\s*(?:no\.?|number)?|account\s*(?:no\.?|number)?|acct\.?\s*(?:no\.?)?)"
         r"[:\s#\-]*([Xx*\d][Xx*\d\s]{2,18}[Xx*\d])",
         text, re.IGNORECASE,
     )
     if acc_match:
-        # strip internal spaces that may appear in masked numbers like "XXXX 1234"
         info["account_number"] = re.sub(r"\s+", "", acc_match.group(1)).strip()
 
-    # fallback: bare 9-18 digit number on its own line (common in mini statements)
     if not info["account_number"]:
         bare_match = re.search(r"(?:^|\s)(\d{9,18})(?:\s|$)", text, re.MULTILINE)
         if bare_match:
             info["account_number"] = bare_match.group(1).strip()
 
-    # account holder
     holder_match = re.search(
         r"(?:name|account\s*holder|a/?c\s*holder)[:\s]+([A-Za-z][A-Za-z\s]{2,48})",
         text, re.IGNORECASE,
@@ -141,7 +132,6 @@ def extract_account_info(text: str) -> dict:
     if holder_match:
         info["account_holder"] = holder_match.group(1).strip()
 
-    # bank name
     banks = [
         "SBI", "State Bank", "HDFC", "ICICI", "Axis", "Kotak", "Punjab National",
         "PNB", "Bank of Baroda", "BOB", "Canara", "Union Bank", "IndusInd",
@@ -157,7 +147,7 @@ def extract_account_info(text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Parsers
+# PDF multi-line block helpers
 # ---------------------------------------------------------------------------
 _DATE_LINE_RE = re.compile(
     r"^(\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}|\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
@@ -167,18 +157,14 @@ _AMOUNT_RE = re.compile(r"INR\s+([\d,]+\.\d{2})", re.IGNORECASE)
 
 
 def _group_blocks(text: str) -> list[str]:
-    """Group multi-line PDF text into per-transaction blocks.
-    Each block starts with a date line.
-    """
+    """Group multi-line PDF text into per-transaction blocks starting with a date."""
     blocks: list[str] = []
     current: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        # skip header/footer lines
-        if re.match(r"^(date|transaction|details|debits|credits|balance)",
-                    stripped, re.IGNORECASE):
+        if re.match(r"^(date|transaction|details|debits|credits|balance)", stripped, re.IGNORECASE):
             continue
         if _DATE_LINE_RE.match(stripped):
             if current:
@@ -192,26 +178,22 @@ def _group_blocks(text: str) -> list[str]:
 
 
 def _extract_merchant(block: str) -> str:
-    """Pull the most useful merchant name from a UPI block."""
-    # normalize newlines and multiple spaces to single space
+    """Extract clean merchant name from a raw UPI transaction block/line."""
     block = re.sub(r"[\r\n]+", " ", block)
     block = re.sub(r"\s{2,}", " ", block)
-    # remove date prefix
     block = _DATE_LINE_RE.sub("", block).strip()
-    # remove INR amounts
     block = _AMOUNT_RE.sub("", block)
-    block = re.sub(r"[\u20b9$][\d,]+\.?\d*", "", block)  # ₹280.000 style
+    block = re.sub(r"[₹$][\d,]+\.?\d*", "", block)
     block = re.sub(r"\b(DR|CR)\b", "", block, flags=re.IGNORECASE)
     block = re.sub(r"BRANCH\s*:\s*ATM SERVICE BRANCH", "", block, flags=re.IGNORECASE)
     block = re.sub(r"/UPI/\d+", "", block)
     block = re.sub(r"/Pay Request", "", block, flags=re.IGNORECASE)
-    block = re.sub(r"[\w.+-]+@[\w]+", "", block)   # remove UPI handles like abc@okaxis
-    block = re.sub(r"XXXXX\w*", "", block)           # remove masked acc numbers
-    block = re.sub(r"\b[A-Z]{4}\d[A-Z0-9]{6}\b", "", block)  # remove IFSC codes
-    block = re.sub(r"\b\d{6,}\b", "", block)         # remove long ref numbers
+    block = re.sub(r"[\w.+-]+@[\w]+", "", block)        # UPI handles
+    block = re.sub(r"XXXXX\w*", "", block)               # masked acc
+    block = re.sub(r"\b[A-Z]{4}\d[A-Z0-9]{6}\b", "", block)  # IFSC codes
+    block = re.sub(r"\b\d{6,}\b", "", block)             # long ref numbers
     block = re.sub(r"\bUPI\b", "", block, flags=re.IGNORECASE)
 
-    # split on / and pick the longest meaningful part
     parts = [p.strip() for p in block.split("/") if p.strip()]
     parts = [p for p in parts if len(p) > 2 and not re.match(r"^[\d\s]+$", p)]
     if not parts:
@@ -219,75 +201,61 @@ def _extract_merchant(block: str) -> str:
     return max(parts, key=len).strip()
 
 
+# ---------------------------------------------------------------------------
+# Parsers
+# ---------------------------------------------------------------------------
 def _parse_pdf_blocks(text: str) -> list[dict]:
-    """Parse multi-line PDF format with INR X.XX - INR pattern."""
+    """Parse multi-line PDF format: INR X.XX - INR (debit then balance)."""
     transactions = []
-    blocks = _group_blocks(text)
-
-    for block in blocks:
+    for block in _group_blocks(text):
         date_match = _DATE_LINE_RE.match(block)
         if not date_match:
             continue
         date = _parse_date(date_match.group(1))
         if not date:
             continue
-
-        # debit: INR 250.00 - INR (amount followed by dash then balance)
         debit_match = re.search(r"INR\s+([\d,]+\.\d{2})\s+-\s+INR", block, re.IGNORECASE)
         if not debit_match:
             continue
-
         amount = _clean_amount(debit_match.group(1))
         if not amount or amount <= 0:
             continue
-
         description = _extract_merchant(block)
         if not description:
             continue
-
         transactions.append({"date": date, "description": description, "amount": amount})
-
     return transactions
 
 
 def _parse_whatsapp_text(text: str) -> list[dict]:
-    """Parse WhatsApp mini statement format.
-    Line 1: *DD-MM-YYYY  ₹280.000 DR*
+    """Parse WhatsApp mini statement:
+    Line 1: *24-10-2026  ₹280.000 DR*
     Line 2: BANKCODE/MERCHANT NAME/XXXXX/upi@handle/...
     """
     transactions = []
     lines = [line.strip() for line in text.splitlines()]
-
     i = 0
     while i < len(lines):
-        line = lines[i]
-        # match: *24-10-2026  ₹280.000 DR* (with or without * markdown)
         header_match = re.search(
             r"(\d{2}-\d{2}-\d{4})\s+[₹Rs.]*\s*([\d,]+\.?\d*)\s+(DR|CR)",
-            line, re.IGNORECASE,
+            lines[i], re.IGNORECASE,
         )
-        if header_match:
-            txn_type = header_match.group(3).upper()
-            if txn_type == "DR":  # only debits
-                date = _parse_date(header_match.group(1))
-                amount = _clean_amount(header_match.group(2))
-                # merchant is on the next non-empty line
-                merchant = ""
-                j = i + 1
-                while j < len(lines) and not lines[j].strip():
-                    j += 1
-                if j < len(lines):
-                    merchant = _extract_merchant(lines[j])
-                if date and amount and merchant:
-                    transactions.append({"date": date, "description": merchant, "amount": amount})
+        if header_match and header_match.group(3).upper() == "DR":
+            date = _parse_date(header_match.group(1))
+            amount = _clean_amount(header_match.group(2))
+            # find next non-empty line for merchant
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            merchant = _extract_merchant(lines[j]) if j < len(lines) else ""
+            if date and amount and merchant:
+                transactions.append({"date": date, "description": merchant, "amount": amount})
         i += 1
     return transactions
 
 
 def _parse_simple_lines(text: str) -> list[dict]:
-    """Parse single-line formats: WhatsApp mini statement, SMS, simple CSV-like text.
-    Handles: Dr 250.00 / 250.00 Dr / -250.00 formats.
-    """
+    """Parse single-line formats: Dr 250.00 / 250.00 Dr."""
     transactions = []
     line_re = re.compile(
         r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4})"
@@ -308,7 +276,6 @@ def _parse_simple_lines(text: str) -> list[dict]:
         description = re.sub(r"\s+", " ", m.group(2)).strip(" :-|")
         if not date or not amount or not description:
             continue
-        # skip credit lines
         if re.search(r"\b(cr|credit)\b", line, re.IGNORECASE):
             continue
         transactions.append({"date": date, "description": description, "amount": amount})
@@ -316,7 +283,7 @@ def _parse_simple_lines(text: str) -> list[dict]:
 
 
 def _parse_text_lines(text: str) -> list[dict]:
-    """Try WhatsApp format first, then PDF block format, then simple line format."""
+    """Try WhatsApp → PDF blocks → simple lines."""
     transactions = _parse_whatsapp_text(text)
     if not transactions:
         transactions = _parse_pdf_blocks(text)
@@ -325,14 +292,15 @@ def _parse_text_lines(text: str) -> list[dict]:
     return transactions
 
 
+# ---------------------------------------------------------------------------
+# Public parsers
+# ---------------------------------------------------------------------------
 def parse_pdf(file_bytes: bytes) -> tuple[dict, list[dict]]:
     text = ""
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page in pdf.pages:
             text += (page.extract_text() or "") + "\n"
-    account_info = extract_account_info(text)
-    transactions = _parse_text_lines(text)
-    return account_info, transactions
+    return extract_account_info(text), _parse_text_lines(text)
 
 
 def parse_csv(file_bytes: bytes) -> tuple[dict, list[dict]]:
@@ -343,7 +311,6 @@ def parse_csv(file_bytes: bytes) -> tuple[dict, list[dict]]:
     reader = csv.DictReader(io.StringIO(text))
     headers = [h.lower().strip() for h in (reader.fieldnames or [])]
 
-    # map common CSV column names
     date_col = next((h for h in headers if "date" in h), None)
     desc_col = next((h for h in headers if any(k in h for k in ["desc", "narration", "particular", "detail", "remark"])), None)
     debit_col = next((h for h in headers if "debit" in h or "dr" in h or "withdrawal" in h), None)
@@ -362,7 +329,6 @@ def parse_csv(file_bytes: bytes) -> tuple[dict, list[dict]]:
         if date and amount and amount > 0 and description:
             transactions.append({"date": date, "description": description, "amount": amount})
 
-    # fallback to line parser if CSV parsing yielded nothing
     if not transactions:
         transactions = _parse_text_lines(text)
 
@@ -370,9 +336,7 @@ def parse_csv(file_bytes: bytes) -> tuple[dict, list[dict]]:
 
 
 def parse_raw_text(text: str) -> tuple[dict, list[dict]]:
-    account_info = extract_account_info(text)
-    transactions = _parse_text_lines(text)
-    return account_info, transactions
+    return extract_account_info(text), _parse_text_lines(text)
 
 
 # ---------------------------------------------------------------------------
@@ -383,10 +347,6 @@ def parse_statement(
     file_bytes: bytes | None = None,
     raw_text: str | None = None,
 ) -> tuple[dict, list[dict]]:
-    """
-    Returns (account_info, transactions).
-    source: "pdf" | "csv" | "text"
-    """
     if source == "pdf" and file_bytes:
         return parse_pdf(file_bytes)
     if source == "csv" and file_bytes:
