@@ -95,23 +95,33 @@ def _clean_amount(raw: str) -> float | None:
 def extract_account_info(text: str) -> dict:
     info: dict = {"bank_name": None, "account_number": None, "account_holder": None}
 
-    # account number patterns: Ac No, A/C, Account No, Acct
+    # account number — flexible: label then optional separators then the number
+    # covers: Ac No, A/C No, Account No, Account Number, Acct No
+    # number itself: digits and X/x/* masking chars, 4-20 chars
     acc_match = re.search(
-        r"(?:a/?c\s*(?:no\.?|number)?|account\s*(?:no\.?|number)?|acct\.?\s*(?:no\.?)?)[:\s#]*([X*\d]{4,20})",
+        r"(?:a/?c\s*(?:no\.?|number)?|account\s*(?:no\.?|number)?|acct\.?\s*(?:no\.?)?)"
+        r"[:\s#\-]*([Xx*\d][Xx*\d\s]{2,18}[Xx*\d])",
         text, re.IGNORECASE,
     )
     if acc_match:
-        info["account_number"] = acc_match.group(1).strip()
+        # strip internal spaces that may appear in masked numbers like "XXXX 1234"
+        info["account_number"] = re.sub(r"\s+", "", acc_match.group(1)).strip()
+
+    # fallback: bare 9-18 digit number on its own line (common in mini statements)
+    if not info["account_number"]:
+        bare_match = re.search(r"(?:^|\s)(\d{9,18})(?:\s|$)", text, re.MULTILINE)
+        if bare_match:
+            info["account_number"] = bare_match.group(1).strip()
 
     # account holder
     holder_match = re.search(
-        r"(?:name|account\s*holder|a/?c\s*holder)[:\s]+([A-Za-z\s]{3,50})",
+        r"(?:name|account\s*holder|a/?c\s*holder)[:\s]+([A-Za-z][A-Za-z\s]{2,48})",
         text, re.IGNORECASE,
     )
     if holder_match:
         info["account_holder"] = holder_match.group(1).strip()
 
-    # bank name — look for common Indian bank names
+    # bank name
     banks = [
         "SBI", "State Bank", "HDFC", "ICICI", "Axis", "Kotak", "Punjab National",
         "PNB", "Bank of Baroda", "BOB", "Canara", "Union Bank", "IndusInd",
