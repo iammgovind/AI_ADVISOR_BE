@@ -124,15 +124,16 @@ def get_portfolio_insights(db: Session, user_id) -> dict:
     profile = _build_financial_profile(db, user_id)
     prompt = f"""
 You are an expert investment advisor. Analyze this user's portfolio and provide insights.
+IMPORTANT: All monetary values are in Indian Rupees (INR). Always use the ₹ symbol, never use $ or USD.
 
 Portfolio Data:
-- Total Invested: {profile['portfolio']['total_invested']}
-- Current Value: {profile['portfolio']['current_value']}
-- Profit/Loss: {profile['portfolio']['profit_loss']} ({profile['portfolio']['profit_loss_pct']}%)
+- Total Invested: ₹{profile['portfolio']['total_invested']}
+- Current Value: ₹{profile['portfolio']['current_value']}
+- Profit/Loss: ₹{profile['portfolio']['profit_loss']} ({profile['portfolio']['profit_loss_pct']}%)
 - Holdings by Type: {profile['portfolio']['by_type']}
 - Total Holdings: {profile['portfolio']['total_holdings']}
 
-Monthly Expenses: {profile['monthly_expense']}
+Monthly Expenses: ₹{profile['monthly_expense']}
 Budget Utilization: {profile['budget_utilization_pct']}%
 Top Expense Categories: {profile['top_expense_categories']}
 
@@ -143,7 +144,7 @@ Provide:
 4. Diversification assessment
 5. 3 specific actionable recommendations
 
-Be concise and specific. Use INR currency.
+Be concise and specific. Use ₹ (INR) for all monetary values.
 """
     return {"profile": profile, "insights": _call_gemini(prompt)}
 
@@ -152,6 +153,7 @@ def get_recommendations(db: Session, user_id) -> dict:
     profile = _build_financial_profile(db, user_id)
     prompt = f"""
 You are a SEBI-registered investment advisor. Based on this user's financial profile, provide personalized investment recommendations.
+IMPORTANT: All monetary values are in Indian Rupees (INR). Always use the ₹ symbol, never use $ or USD.
 
 Financial Profile:
 - Monthly Expenses: ₹{profile['monthly_expense']}
@@ -178,6 +180,7 @@ def analyze_full_profile(db: Session, user_id) -> dict:
     profile = _build_financial_profile(db, user_id)
     prompt = f"""
 You are a comprehensive financial advisor. Perform a full financial health analysis.
+IMPORTANT: All monetary values are in Indian Rupees (INR). Always use the ₹ symbol, never use $ or USD.
 
 User Financial Data:
 {profile}
@@ -191,6 +194,6 @@ Provide a complete analysis with:
 6. Top 5 personalized recommendations ranked by priority
 7. 30-day action plan
 
-Be detailed but structured. Use INR currency.
+Be detailed but structured. Use ₹ (INR) for all monetary values.
 """
     return {"profile": profile, "analysis": _call_gemini(prompt)}

@@ -26,7 +26,7 @@ def chat(db: Session, user_id, message: str) -> str:
         f"{msg.role.capitalize()}: {msg.content}" for msg in history
     )
  
-    prompt = f"""You are a personal financial advisor AI with memory of this user's conversation history. User's current financial profile: {profile} Conversation history: {history_text} User: {message} Respond as a helpful financial advisor. Reference prior context when relevant. Be concise."""
+    prompt = f"""You are a personal financial advisor AI with memory of this user's conversation history. All monetary values are in Indian Rupees (INR) — always use the ₹ symbol, never $ or USD. User's current financial profile: {profile} Conversation history: {history_text} User: {message} Respond as a helpful financial advisor. Reference prior context when relevant. Be concise."""
  
     reply = _call_gemini(prompt)
  
