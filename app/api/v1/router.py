@@ -15,6 +15,8 @@ from app.api.v1.endpoints import (
     savings,
     multi_agent,
     chat,
+    bank_accounts,
+    statement,
 )
 
 api_router = APIRouter()
@@ -32,12 +34,6 @@ api_router.include_router(risk.router)
 api_router.include_router(savings.router)
 api_router.include_router(multi_agent.router)
 
-# Register chat routes
 api_router.include_router(chat.router)
-
-# Temporary debugging
-print("CHAT MODULE:", chat.__file__)
-print("CHAT ROUTES:", [
-    (route.path, route.methods)
-    for route in chat.router.routes
-])
+api_router.include_router(bank_accounts.router)
+api_router.include_router(statement.router)

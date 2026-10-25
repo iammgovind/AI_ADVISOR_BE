@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from app.models.budget import Budget
     from app.models.goal import Goal
     from app.models.investment import Investment
+    from app.models.bank_account import BankAccount
+    from app.models.statement_upload import StatementUpload
 
 
 class UserRole(str, enum.Enum):
@@ -42,3 +44,5 @@ class User(Base):
     budgets: Mapped[list["Budget"]] = relationship("Budget", back_populates="user", cascade="all, delete-orphan")
     goals: Mapped[list["Goal"]] = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
     investments: Mapped[list["Investment"]] = relationship("Investment", back_populates="user", cascade="all, delete-orphan")
+    bank_accounts: Mapped[list["BankAccount"]] = relationship("BankAccount", back_populates="user", cascade="all, delete-orphan")
+    statement_uploads: Mapped[list["StatementUpload"]] = relationship("StatementUpload", back_populates="user", cascade="all, delete-orphan")
