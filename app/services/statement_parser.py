@@ -192,25 +192,30 @@ def _group_blocks(text: str) -> list[str]:
 
 
 def _extract_merchant(block: str) -> str:
-    """Pull the most useful merchant name from a UPI block.
-    UPI format: BANKCODE/MERCHANT NAME/XXXXX/upi@handle/UPI/refno/...
-    """
+    """Pull the most useful merchant name from a UPI block."""
+    # normalize newlines and multiple spaces to single space
+    block = re.sub(r"[\r\n]+", " ", block)
+    block = re.sub(r"\s{2,}", " ", block)
     # remove date prefix
     block = _DATE_LINE_RE.sub("", block).strip()
-    # remove INR amounts and trailing junk
+    # remove INR amounts
     block = _AMOUNT_RE.sub("", block)
+    block = re.sub(r"[\u20b9$][\d,]+\.?\d*", "", block)  # ₹280.000 style
+    block = re.sub(r"\b(DR|CR)\b", "", block, flags=re.IGNORECASE)
     block = re.sub(r"BRANCH\s*:\s*ATM SERVICE BRANCH", "", block, flags=re.IGNORECASE)
     block = re.sub(r"/UPI/\d+", "", block)
-    block = re.sub(r"[A-Z0-9]+@[a-z]+", "", block)   # remove UPI handles
-    block = re.sub(r"XXXXX\w*", "", block)             # remove masked acc
-    block = re.sub(r"[A-Z]{4}\d[A-Z0-9]{6}", "", block)  # remove IFSC codes
+    block = re.sub(r"/Pay Request", "", block, flags=re.IGNORECASE)
+    block = re.sub(r"[\w.+-]+@[\w]+", "", block)   # remove UPI handles like abc@okaxis
+    block = re.sub(r"XXXXX\w*", "", block)           # remove masked acc numbers
+    block = re.sub(r"\b[A-Z]{4}\d[A-Z0-9]{6}\b", "", block)  # remove IFSC codes
+    block = re.sub(r"\b\d{6,}\b", "", block)         # remove long ref numbers
+    block = re.sub(r"\bUPI\b", "", block, flags=re.IGNORECASE)
 
     # split on / and pick the longest meaningful part
     parts = [p.strip() for p in block.split("/") if p.strip()]
     parts = [p for p in parts if len(p) > 2 and not re.match(r"^[\d\s]+$", p)]
     if not parts:
         return block.strip()
-    # longest part is usually the merchant name
     return max(parts, key=len).strip()
 
 
