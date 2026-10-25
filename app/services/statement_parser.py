@@ -10,54 +10,73 @@ from app.models.expense import ExpenseCategory
 # ---------------------------------------------------------------------------
 # Category keyword map (Indian context)
 # ---------------------------------------------------------------------------
-_CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[str]]] = [
+# (keyword, whole_word_only) — whole_word=True uses \b to avoid false matches
+_CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[tuple[str, bool]]]] = [
     (ExpenseCategory.food, [
-        "swiggy", "zomato", "hotel", "restaurant", "cafe", "food", "kitchen",
-        "dhaba", "biryani", "pizza", "burger", "bakery", "canteen", "mess",
-        "dominos", "kfc", "mcdonalds", "subway", "haldirams", "barbeque",
-        "eatery", "diner", "snacks", "juice", "tea", "coffee", "starbucks",
+        ("swiggy", False), ("zomato", False), ("restaurant", False), ("cafe", False),
+        ("kitchen", False), ("dhaba", False), ("biryani", False), ("pizza", False),
+        ("burger", False), ("bakery", False), ("canteen", False), ("dominos", False),
+        ("kfc", True), ("mcdonalds", False), ("subway", False), ("haldirams", False),
+        ("barbeque", False), ("eatery", False), ("diner", False), ("starbucks", False),
+        ("foodcourt", False), ("tiffin", False), ("hotel", True),
     ]),
     (ExpenseCategory.transport, [
-        "uber", "ola", "rapido", "petrol", "fuel", "metro", "bus", "railway",
-        "irctc", "redbus", "makemytrip", "goibibo", "indigo", "spicejet",
-        "airindia", "cab", "auto", "toll", "parking", "diesel",
+        ("uber", False), ("ola", True), ("rapido", False), ("petrol", False),
+        ("fuel", False), ("metro", False), ("irctc", False), ("redbus", False),
+        ("makemytrip", False), ("goibibo", False), ("indigo", False), ("spicejet", False),
+        ("airindia", False), ("fastag", False), ("diesel", False), ("railway", False),
+        ("parking", False), ("tollway", False), ("rapido", False),
     ]),
     (ExpenseCategory.shopping, [
-        "amazon", "flipkart", "myntra", "meesho", "ajio", "nykaa", "snapdeal",
-        "mall", "store", "shop", "market", "retail", "bigbasket", "blinkit",
-        "zepto", "grofers", "dmart", "reliance", "tata", "croma", "vijay sales",
+        ("amazon", False), ("flipkart", False), ("myntra", False), ("meesho", False),
+        ("ajio", False), ("nykaa", False), ("snapdeal", False), ("bigbasket", False),
+        ("blinkit", False), ("zepto", False), ("grofers", False), ("dmart", False),
+        ("croma", False), ("vijaysales", False), ("shopify", False),
+        ("stores", False), ("fancy", False), ("enterprises", False),
     ]),
     (ExpenseCategory.entertainment, [
-        "netflix", "spotify", "pvr", "inox", "bookmyshow", "hotstar", "disney",
-        "youtube", "prime", "zee5", "sonyliv", "game", "gaming", "steam",
-        "playstation", "xbox", "concert", "event", "ticket",
+        ("netflix", False), ("spotify", False), ("pvr", True), ("inox", False),
+        ("bookmyshow", False), ("hotstar", False), ("disney", False), ("zee5", False),
+        ("sonyliv", False), ("gaming", False), ("steam", False), ("playstation", False),
+        ("xbox", False), ("concert", False), ("youtube", False),
     ]),
     (ExpenseCategory.health, [
-        "hospital", "pharmacy", "apollo", "medplus", "doctor", "clinic",
-        "health", "med", "pharma", "diagnostic", "lab", "pathology",
-        "netmeds", "1mg", "practo", "dental", "optician", "gym", "fitness",
+        ("hospital", False), ("pharmacy", False), ("apollo", False), ("medplus", False),
+        ("doctor", False), ("clinic", False), ("pharma", False), ("diagnostic", False),
+        ("pathology", False), ("netmeds", False), ("1mg", False), ("practo", False),
+        ("dental", False), ("optician", False), ("fitness", False), ("healthkart", False),
     ]),
     (ExpenseCategory.education, [
-        "school", "college", "university", "udemy", "coursera", "fees",
-        "tuition", "book", "stationery", "byju", "unacademy", "vedantu",
-        "coaching", "institute", "library", "exam",
+        ("school", False), ("college", False), ("university", False), ("udemy", False),
+        ("coursera", False), ("tuition", False), ("stationery", False), ("byju", False),
+        ("unacademy", False), ("vedantu", False), ("coaching", False), ("institute", False),
+        ("admission", False),
     ]),
     (ExpenseCategory.housing, [
-        "rent", "electricity", "water", "gas", "maintenance", "society",
-        "broadband", "wifi", "airtel", "jio", "bsnl", "vi ", "vodafone",
-        "idea", "recharge", "bill", "insurance", "lic", "housing",
-        "property", "flat", "pg ", "hostel",
+        ("electricity", False), ("maintenance", False), ("society", False),
+        ("broadband", False), ("airtel", False), ("jio", True), ("bsnl", False),
+        ("vodafone", False), ("recharge", False), ("insurance", False),
+        ("housing", False), ("rentpay", False), ("nobroker", False),
     ]),
 ]
 
 
 def suggest_category(description: str) -> tuple[ExpenseCategory, str]:
-    """Return (category, confidence) based on description keywords."""
-    text = description.lower()
+    """Return (category, confidence) based on description keywords.
+    Splits UPI-style descriptions like UPI/SWIGGY ORDERS/REF123 into parts first.
+    """
+    # split on / - _ | to handle UPI/NEFT/POS style descriptions
+    parts = re.split(r"[/\-_|]", description.lower())
+    text = " ".join(parts)
+
     for category, keywords in _CATEGORY_KEYWORDS:
-        for kw in keywords:
-            if kw in text:
-                return category, "high"
+        for kw, whole_word in keywords:
+            if whole_word:
+                if re.search(rf"\b{re.escape(kw)}\b", text):
+                    return category, "high"
+            else:
+                if kw in text:
+                    return category, "high"
     return ExpenseCategory.other, "low"
 
 
@@ -68,6 +87,7 @@ _DATE_FORMATS = [
     "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
     "%Y-%m-%d", "%d %b %Y", "%d %b %y", "%d%b%Y", "%d%b%y",
     "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S",
+    "%d %B %Y",  # 02 March 2026
 ]
 
 
@@ -95,23 +115,33 @@ def _clean_amount(raw: str) -> float | None:
 def extract_account_info(text: str) -> dict:
     info: dict = {"bank_name": None, "account_number": None, "account_holder": None}
 
-    # account number patterns: Ac No, A/C, Account No, Acct
+    # account number — flexible: label then optional separators then the number
+    # covers: Ac No, A/C No, Account No, Account Number, Acct No
+    # number itself: digits and X/x/* masking chars, 4-20 chars
     acc_match = re.search(
-        r"(?:a/?c\s*(?:no\.?|number)?|account\s*(?:no\.?|number)?|acct\.?\s*(?:no\.?)?)[:\s#]*([X*\d]{4,20})",
+        r"(?:a/?c\s*(?:no\.?|number)?|account\s*(?:no\.?|number)?|acct\.?\s*(?:no\.?)?)"
+        r"[:\s#\-]*([Xx*\d][Xx*\d\s]{2,18}[Xx*\d])",
         text, re.IGNORECASE,
     )
     if acc_match:
-        info["account_number"] = acc_match.group(1).strip()
+        # strip internal spaces that may appear in masked numbers like "XXXX 1234"
+        info["account_number"] = re.sub(r"\s+", "", acc_match.group(1)).strip()
+
+    # fallback: bare 9-18 digit number on its own line (common in mini statements)
+    if not info["account_number"]:
+        bare_match = re.search(r"(?:^|\s)(\d{9,18})(?:\s|$)", text, re.MULTILINE)
+        if bare_match:
+            info["account_number"] = bare_match.group(1).strip()
 
     # account holder
     holder_match = re.search(
-        r"(?:name|account\s*holder|a/?c\s*holder)[:\s]+([A-Za-z\s]{3,50})",
+        r"(?:name|account\s*holder|a/?c\s*holder)[:\s]+([A-Za-z][A-Za-z\s]{2,48})",
         text, re.IGNORECASE,
     )
     if holder_match:
         info["account_holder"] = holder_match.group(1).strip()
 
-    # bank name — look for common Indian bank names
+    # bank name
     banks = [
         "SBI", "State Bank", "HDFC", "ICICI", "Axis", "Kotak", "Punjab National",
         "PNB", "Bank of Baroda", "BOB", "Canara", "Union Bank", "IndusInd",
@@ -129,34 +159,102 @@ def extract_account_info(text: str) -> dict:
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
-def _parse_text_lines(text: str) -> list[dict]:
+_DATE_LINE_RE = re.compile(
+    r"^(\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}|\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+    re.IGNORECASE,
+)
+_AMOUNT_RE = re.compile(r"INR\s+([\d,]+\.\d{2})", re.IGNORECASE)
+
+
+def _group_blocks(text: str) -> list[str]:
+    """Group multi-line PDF text into per-transaction blocks.
+    Each block starts with a date line.
     """
-    Generic line-by-line parser for mini statements / raw text.
-    Looks for lines containing a date + amount pattern.
-    """
-    transactions = []
-    # pattern: date ... description ... amount (Dr/Cr suffix optional)
-    line_pattern = re.compile(
-        r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}\s*[A-Za-z]{3}\s*\d{2,4})"  # date
-        r"(.+?)"                                                                      # description
-        r"([\d,]+\.?\d*)\s*(?:Dr|CR|dr|cr)?",                                        # amount
-        re.IGNORECASE,
-    )
+    blocks: list[str] = []
+    current: list[str] = []
     for line in text.splitlines():
-        line = line.strip()
-        if not line:
+        stripped = line.strip()
+        if not stripped:
             continue
-        m = line_pattern.search(line)
-        if not m:
+        # skip header/footer lines
+        if re.match(r"^(date|transaction|details|debits|credits|balance)",
+                    stripped, re.IGNORECASE):
             continue
-        date = _parse_date(m.group(1))
-        amount = _clean_amount(m.group(3))
-        description = re.sub(r"\s+", " ", m.group(2)).strip(" :-|")
-        if date and amount and description:
-            # only debit — lines with "Dr" or no "Cr"
-            is_credit = bool(re.search(r"\bCr\b", line, re.IGNORECASE))
-            if not is_credit:
-                transactions.append({"date": date, "description": description, "amount": amount})
+        if _DATE_LINE_RE.match(stripped):
+            if current:
+                blocks.append(" ".join(current))
+            current = [stripped]
+        else:
+            current.append(stripped)
+    if current:
+        blocks.append(" ".join(current))
+    return blocks
+
+
+def _extract_merchant(block: str) -> str:
+    """Pull the most useful merchant name from a UPI block.
+    UPI format: BANKCODE/MERCHANT NAME/XXXXX/upi@handle/UPI/refno/...
+    """
+    # remove date prefix
+    block = _DATE_LINE_RE.sub("", block).strip()
+    # remove INR amounts and trailing junk
+    block = _AMOUNT_RE.sub("", block)
+    block = re.sub(r"BRANCH\s*:\s*ATM SERVICE BRANCH", "", block, flags=re.IGNORECASE)
+    block = re.sub(r"/UPI/\d+", "", block)
+    block = re.sub(r"[A-Z0-9]+@[a-z]+", "", block)   # remove UPI handles
+    block = re.sub(r"XXXXX\w*", "", block)             # remove masked acc
+    block = re.sub(r"[A-Z]{4}\d[A-Z0-9]{6}", "", block)  # remove IFSC codes
+
+    # split on / and pick the longest meaningful part
+    parts = [p.strip() for p in block.split("/") if p.strip()]
+    parts = [p for p in parts if len(p) > 2 and not re.match(r"^[\d\s]+$", p)]
+    if not parts:
+        return block.strip()
+    # longest part is usually the merchant name
+    return max(parts, key=len).strip()
+
+
+def _parse_text_lines(text: str) -> list[dict]:
+    """Parse both single-line and multi-line (PDF) bank statement formats."""
+    transactions = []
+    blocks = _group_blocks(text)
+
+    for block in blocks:
+        # extract date
+        date_match = _DATE_LINE_RE.match(block)
+        if not date_match:
+            continue
+        date = _parse_date(date_match.group(1))
+        if not date:
+            continue
+
+        # find all INR amounts in block
+        amounts = _AMOUNT_RE.findall(block)
+        if not amounts:
+            continue
+
+        # determine debit/credit
+        # pattern: INR debit_amount - INR balance  OR  - INR credit_amount INR balance
+        # a dash before INR credit means it's a credit transaction
+        is_credit = bool(re.search(r"-\s*INR\s+[\d,]+\.\d{2}\s+INR", block, re.IGNORECASE))
+        # also check if first amount slot is empty ("  - INR 700" style from PDF)
+        debit_match = re.search(
+            r"INR\s+([\d,]+\.\d{2})\s+-\s+INR", block, re.IGNORECASE
+        )
+        if not debit_match:
+            # no debit amount found — skip (credit only)
+            continue
+
+        amount = _clean_amount(debit_match.group(1))
+        if not amount or amount <= 0:
+            continue
+
+        description = _extract_merchant(block)
+        if not description:
+            continue
+
+        transactions.append({"date": date, "description": description, "amount": amount})
+
     return transactions
 
 
