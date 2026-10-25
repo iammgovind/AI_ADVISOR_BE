@@ -32,6 +32,7 @@ _CATEGORY_KEYWORDS: list[tuple[ExpenseCategory, list[tuple[str, bool]]]] = [
         ("ajio", False), ("nykaa", False), ("snapdeal", False), ("bigbasket", False),
         ("blinkit", False), ("zepto", False), ("grofers", False), ("dmart", False),
         ("croma", False), ("vijaysales", False), ("shopify", False),
+        ("stores", False), ("fancy", False), ("enterprises", False),
     ]),
     (ExpenseCategory.entertainment, [
         ("netflix", False), ("spotify", False), ("pvr", True), ("inox", False),
@@ -86,6 +87,7 @@ _DATE_FORMATS = [
     "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y",
     "%Y-%m-%d", "%d %b %Y", "%d %b %y", "%d%b%Y", "%d%b%y",
     "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S",
+    "%d %B %Y",  # 02 March 2026
 ]
 
 
@@ -157,34 +159,102 @@ def extract_account_info(text: str) -> dict:
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
-def _parse_text_lines(text: str) -> list[dict]:
+_DATE_LINE_RE = re.compile(
+    r"^(\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}|\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+    re.IGNORECASE,
+)
+_AMOUNT_RE = re.compile(r"INR\s+([\d,]+\.\d{2})", re.IGNORECASE)
+
+
+def _group_blocks(text: str) -> list[str]:
+    """Group multi-line PDF text into per-transaction blocks.
+    Each block starts with a date line.
     """
-    Generic line-by-line parser for mini statements / raw text.
-    Looks for lines containing a date + amount pattern.
-    """
-    transactions = []
-    # pattern: date ... description ... amount (Dr/Cr suffix optional)
-    line_pattern = re.compile(
-        r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}\s*[A-Za-z]{3}\s*\d{2,4})"  # date
-        r"(.+?)"                                                                      # description
-        r"([\d,]+\.?\d*)\s*(?:Dr|CR|dr|cr)?",                                        # amount
-        re.IGNORECASE,
-    )
+    blocks: list[str] = []
+    current: list[str] = []
     for line in text.splitlines():
-        line = line.strip()
-        if not line:
+        stripped = line.strip()
+        if not stripped:
             continue
-        m = line_pattern.search(line)
-        if not m:
+        # skip header/footer lines
+        if re.match(r"^(date|transaction|details|debits|credits|balance)",
+                    stripped, re.IGNORECASE):
             continue
-        date = _parse_date(m.group(1))
-        amount = _clean_amount(m.group(3))
-        description = re.sub(r"\s+", " ", m.group(2)).strip(" :-|")
-        if date and amount and description:
-            # only debit — lines with "Dr" or no "Cr"
-            is_credit = bool(re.search(r"\bCr\b", line, re.IGNORECASE))
-            if not is_credit:
-                transactions.append({"date": date, "description": description, "amount": amount})
+        if _DATE_LINE_RE.match(stripped):
+            if current:
+                blocks.append(" ".join(current))
+            current = [stripped]
+        else:
+            current.append(stripped)
+    if current:
+        blocks.append(" ".join(current))
+    return blocks
+
+
+def _extract_merchant(block: str) -> str:
+    """Pull the most useful merchant name from a UPI block.
+    UPI format: BANKCODE/MERCHANT NAME/XXXXX/upi@handle/UPI/refno/...
+    """
+    # remove date prefix
+    block = _DATE_LINE_RE.sub("", block).strip()
+    # remove INR amounts and trailing junk
+    block = _AMOUNT_RE.sub("", block)
+    block = re.sub(r"BRANCH\s*:\s*ATM SERVICE BRANCH", "", block, flags=re.IGNORECASE)
+    block = re.sub(r"/UPI/\d+", "", block)
+    block = re.sub(r"[A-Z0-9]+@[a-z]+", "", block)   # remove UPI handles
+    block = re.sub(r"XXXXX\w*", "", block)             # remove masked acc
+    block = re.sub(r"[A-Z]{4}\d[A-Z0-9]{6}", "", block)  # remove IFSC codes
+
+    # split on / and pick the longest meaningful part
+    parts = [p.strip() for p in block.split("/") if p.strip()]
+    parts = [p for p in parts if len(p) > 2 and not re.match(r"^[\d\s]+$", p)]
+    if not parts:
+        return block.strip()
+    # longest part is usually the merchant name
+    return max(parts, key=len).strip()
+
+
+def _parse_text_lines(text: str) -> list[dict]:
+    """Parse both single-line and multi-line (PDF) bank statement formats."""
+    transactions = []
+    blocks = _group_blocks(text)
+
+    for block in blocks:
+        # extract date
+        date_match = _DATE_LINE_RE.match(block)
+        if not date_match:
+            continue
+        date = _parse_date(date_match.group(1))
+        if not date:
+            continue
+
+        # find all INR amounts in block
+        amounts = _AMOUNT_RE.findall(block)
+        if not amounts:
+            continue
+
+        # determine debit/credit
+        # pattern: INR debit_amount - INR balance  OR  - INR credit_amount INR balance
+        # a dash before INR credit means it's a credit transaction
+        is_credit = bool(re.search(r"-\s*INR\s+[\d,]+\.\d{2}\s+INR", block, re.IGNORECASE))
+        # also check if first amount slot is empty ("  - INR 700" style from PDF)
+        debit_match = re.search(
+            r"INR\s+([\d,]+\.\d{2})\s+-\s+INR", block, re.IGNORECASE
+        )
+        if not debit_match:
+            # no debit amount found — skip (credit only)
+            continue
+
+        amount = _clean_amount(debit_match.group(1))
+        if not amount or amount <= 0:
+            continue
+
+        description = _extract_merchant(block)
+        if not description:
+            continue
+
+        transactions.append({"date": date, "description": description, "amount": amount})
+
     return transactions
 
 
