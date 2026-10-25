@@ -214,13 +214,12 @@ def _extract_merchant(block: str) -> str:
     return max(parts, key=len).strip()
 
 
-def _parse_text_lines(text: str) -> list[dict]:
-    """Parse both single-line and multi-line (PDF) bank statement formats."""
+def _parse_pdf_blocks(text: str) -> list[dict]:
+    """Parse multi-line PDF format with INR X.XX - INR pattern."""
     transactions = []
     blocks = _group_blocks(text)
 
     for block in blocks:
-        # extract date
         date_match = _DATE_LINE_RE.match(block)
         if not date_match:
             continue
@@ -228,21 +227,9 @@ def _parse_text_lines(text: str) -> list[dict]:
         if not date:
             continue
 
-        # find all INR amounts in block
-        amounts = _AMOUNT_RE.findall(block)
-        if not amounts:
-            continue
-
-        # determine debit/credit
-        # pattern: INR debit_amount - INR balance  OR  - INR credit_amount INR balance
-        # a dash before INR credit means it's a credit transaction
-        is_credit = bool(re.search(r"-\s*INR\s+[\d,]+\.\d{2}\s+INR", block, re.IGNORECASE))
-        # also check if first amount slot is empty ("  - INR 700" style from PDF)
-        debit_match = re.search(
-            r"INR\s+([\d,]+\.\d{2})\s+-\s+INR", block, re.IGNORECASE
-        )
+        # debit: INR 250.00 - INR (amount followed by dash then balance)
+        debit_match = re.search(r"INR\s+([\d,]+\.\d{2})\s+-\s+INR", block, re.IGNORECASE)
         if not debit_match:
-            # no debit amount found — skip (credit only)
             continue
 
         amount = _clean_amount(debit_match.group(1))
@@ -255,6 +242,45 @@ def _parse_text_lines(text: str) -> list[dict]:
 
         transactions.append({"date": date, "description": description, "amount": amount})
 
+    return transactions
+
+
+def _parse_simple_lines(text: str) -> list[dict]:
+    """Parse single-line formats: WhatsApp mini statement, SMS, simple CSV-like text.
+    Handles: Dr 250.00 / 250.00 Dr / -250.00 formats.
+    """
+    transactions = []
+    line_re = re.compile(
+        r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4})"
+        r"(.+?)"
+        r"([\d,]+\.\d{2})"
+        r"[^\d]*$",
+        re.IGNORECASE,
+    )
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = line_re.search(line)
+        if not m:
+            continue
+        date = _parse_date(m.group(1))
+        amount = _clean_amount(m.group(3))
+        description = re.sub(r"\s+", " ", m.group(2)).strip(" :-|")
+        if not date or not amount or not description:
+            continue
+        # skip credit lines
+        if re.search(r"\b(cr|credit)\b", line, re.IGNORECASE):
+            continue
+        transactions.append({"date": date, "description": description, "amount": amount})
+    return transactions
+
+
+def _parse_text_lines(text: str) -> list[dict]:
+    """Try PDF block parser first, fallback to simple line parser."""
+    transactions = _parse_pdf_blocks(text)
+    if not transactions:
+        transactions = _parse_simple_lines(text)
     return transactions
 
 
