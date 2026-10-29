@@ -9,9 +9,31 @@ from app.core.deps import get_current_user, require_roles
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.user import User, UserRole
-from app.schemas.user import UserOut, UserUpdateAdmin
+from app.schemas.user import UserOut, UserUpdateAdmin, UserUpdateMe
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+@router.get("/me", response_model=UserOut)
+def get_me(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    return current_user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(
+    payload: UserUpdateMe,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name
+    if payload.password is not None:
+        current_user.hashed_password = hash_password(payload.password)
+    if payload.monthly_income is not None:
+        current_user.monthly_income = payload.monthly_income
+    db.commit()
+    db.refresh(current_user)
+    return current_user
 
 
 @router.get("", response_model=list[UserOut])

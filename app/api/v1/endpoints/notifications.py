@@ -127,6 +127,25 @@ def get_notifications(
                 detail=f"This month ₹{this_month_total} vs last month ₹{last_month_total}",
             ))
 
+    # --- Monthly income alerts ---
+    income = float(current_user.monthly_income) if current_user.monthly_income else None
+    if income and income > 0:
+        income_utilization = round((this_month_total / income) * 100, 1)
+        if this_month_total >= income:
+            notifications.append(Notification(
+                type="expense",
+                alert="exceeded",
+                message="Monthly expenses exceeded your income!",
+                detail=f"Spent ₹{this_month_total} of ₹{income} income ({income_utilization}% used)",
+            ))
+        elif income_utilization >= 80:
+            notifications.append(Notification(
+                type="expense",
+                alert="warning",
+                message=f"Expenses at {income_utilization}% of monthly income",
+                detail=f"Spent ₹{this_month_total} of ₹{income} — ₹{round(income - this_month_total, 2)} remaining",
+            ))
+
     # --- Savings alert (no budget set) ---
     if not budgets:
         notifications.append(Notification(

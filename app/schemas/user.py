@@ -15,6 +15,7 @@ class UserCreate(BaseModel):
 class UserUpdateMe(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    monthly_income: float | None = Field(default=None, gt=0)
 
 
 class UserUpdateAdmin(BaseModel):
@@ -31,5 +32,6 @@ class UserOut(BaseModel):
     full_name: str | None
     role: UserRole
     is_active: bool
+    monthly_income: float | None
     created_at: datetime
     updated_at: datetime
