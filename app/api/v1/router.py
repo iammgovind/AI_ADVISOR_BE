@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     chat,
     bank_accounts,
     statement,
+    notifications,
 )
 
 api_router = APIRouter()
@@ -37,3 +38,4 @@ api_router.include_router(multi_agent.router)
 api_router.include_router(chat.router)
 api_router.include_router(bank_accounts.router)
 api_router.include_router(statement.router)
+api_router.include_router(notifications.router)
