@@ -1,4 +1,5 @@
 from datetime import date
+from math import ceil
 
 from sqlalchemy import extract, func, select
 from sqlalchemy.orm import Session
@@ -6,6 +7,54 @@ from sqlalchemy.orm import Session
 from app.models.budget import Budget
 from app.models.expense import Expense
 from app.models.goal import Goal, GoalStatus
+
+
+def _suggest_goal_timeline(remaining: float, savings_capacity: float, today: date) -> dict:
+    """For an at-risk goal, suggest realistic achievement date with and without salary growth."""
+    if savings_capacity <= 0:
+        return {
+            "realistic_date": None,
+            "optimistic_date": None,
+            "message": "⚠️ No savings capacity currently. Reduce expenses to start working toward this goal.",
+        }
+
+    # --- flat savings: how many months at current capacity ---
+    flat_months = ceil(remaining / savings_capacity)
+    flat_date = date(
+        today.year + (today.month - 1 + flat_months) // 12,
+        (today.month - 1 + flat_months) % 12 + 1,
+        1,
+    )
+
+    # --- with 10% annual growth: simulate month by month ---
+    accumulated = 0.0
+    monthly = savings_capacity
+    optimistic_months = 0
+    for m in range(1, 361):  # cap at 30 years
+        if m > 1 and (m - 1) % 12 == 0:
+            monthly = round(monthly * 1.10, 2)  # 10% raise each year
+        accumulated += monthly
+        optimistic_months = m
+        if accumulated >= remaining:
+            break
+
+    optimistic_date = date(
+        today.year + (today.month - 1 + optimistic_months) // 12,
+        (today.month - 1 + optimistic_months) % 12 + 1,
+        1,
+    )
+
+    message = (
+        f"💡 With your current savings of ₹{savings_capacity:,.0f}/month, you can achieve this goal by "
+        f"{flat_date.strftime('%b %Y')}. "
+        f"If your income grows 10% each year, you could reach it as early as {optimistic_date.strftime('%b %Y')}."
+    )
+
+    return {
+        "realistic_date": str(flat_date),
+        "optimistic_date": str(optimistic_date),
+        "message": message,
+    }
 
 
 def plan_savings(db: Session, user_id) -> dict:
@@ -67,7 +116,7 @@ def plan_savings(db: Session, user_id) -> dict:
         monthly_needed = round(remaining / months_left, 2)
         total_monthly_needed += monthly_needed
         feasible = monthly_needed <= savings_capacity
-        goal_plans.append({
+        plan = {
             "goal_id": str(g.id),
             "title": g.title,
             "target_amount": target,
@@ -79,7 +128,10 @@ def plan_savings(db: Session, user_id) -> dict:
             "monthly_saving_needed": monthly_needed,
             "feasible": feasible,
             "status": "on_track" if feasible else "at_risk",
-        })
+        }
+        if not feasible:
+            plan["suggestion"] = _suggest_goal_timeline(remaining, savings_capacity, today)
+        goal_plans.append(plan)
 
     # sort by priority — at_risk first, then by monthly needed desc
     goal_plans.sort(key=lambda x: (x["status"] == "on_track", -x["monthly_saving_needed"]))
