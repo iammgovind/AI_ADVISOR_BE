@@ -43,6 +43,7 @@ class BulkApproveRequest(BaseModel):
 class BulkApproveResult(BaseModel):
     saved: int
     rejected: int
+    skipped_duplicates: int = 0
 
 
 class StatementUploadOut(BaseModel):

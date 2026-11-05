@@ -131,23 +131,42 @@ def bulk_approve(
     if not upload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
 
+    saved = 0
+    skipped = 0
     for txn in payload.approved:
-        expense = Expense(
+        exists = db.scalar(
+            select(Expense).where(
+                Expense.user_id == current_user.id,
+                Expense.title == txn.description[:255],
+                Expense.amount == txn.amount,
+                Expense.expense_date == txn.date,
+            )
+        )
+        if exists:
+            skipped += 1
+            continue
+        db.add(Expense(
             user_id=current_user.id,
             title=txn.description[:255],
             amount=txn.amount,
             category=txn.category,
             expense_date=txn.date,
             note="Imported from bank statement",
-        )
-        db.add(expense)
+        ))
+        saved += 1
 
-    upload.approved_count = len(payload.approved)
+    if skipped > 0 and saved == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"All {skipped} transactions already exist. This statement may have been uploaded before.",
+        )
+
+    upload.approved_count = saved
     upload.rejected_count = len(payload.rejected_indices)
     upload.status = "completed"
     db.commit()
 
-    return BulkApproveResult(saved=len(payload.approved), rejected=len(payload.rejected_indices))
+    return BulkApproveResult(saved=saved, rejected=len(payload.rejected_indices), skipped_duplicates=skipped)
 
 
 @router.get("/history", response_model=list[StatementUploadOut])
