@@ -133,27 +133,75 @@ def bulk_approve(
 
     saved = 0
     skipped = 0
-    for txn in payload.approved:
-        exists = db.scalar(
-            select(Expense).where(
-                Expense.user_id == current_user.id,
-                Expense.title == txn.description[:255],
-                Expense.amount == txn.amount,
-                Expense.expense_date == txn.date,
+    if payload.duplicate_mode == "skip":
+        for txn in payload.approved:
+            exists = db.scalar(
+                select(Expense).where(
+                    Expense.user_id == current_user.id,
+                    Expense.title == txn.description[:255],
+                    Expense.amount == txn.amount,
+                    Expense.expense_date == txn.date,
+                )
             )
-        )
-        if exists:
-            skipped += 1
-            continue
-        db.add(Expense(
-            user_id=current_user.id,
-            title=txn.description[:255],
-            amount=txn.amount,
-            category=txn.category,
-            expense_date=txn.date,
-            note="Imported from bank statement",
-        ))
-        saved += 1
+            if exists:
+                skipped += 1
+                continue
+            db.add(Expense(
+                user_id=current_user.id,
+                title=txn.description[:255],
+                amount=txn.amount,
+                category=txn.category,
+                expense_date=txn.date,
+                note="Imported from bank statement",
+            ))
+            saved += 1
+    else:
+        checked_transactions = []
+        duplicate_indices = []
+        seen_transactions = set()
+
+        for txn in payload.approved:
+            signature = (txn.description[:255], txn.amount, txn.date)
+            exists = db.scalar(
+                select(Expense).where(
+                    Expense.user_id == current_user.id,
+                    Expense.title == txn.description[:255],
+                    Expense.amount == txn.amount,
+                    Expense.expense_date == txn.date,
+                )
+            )
+            is_duplicate = exists is not None or signature in seen_transactions
+            checked_transactions.append((txn, is_duplicate))
+            if is_duplicate:
+                duplicate_indices.append(txn.row_index)
+            else:
+                seen_transactions.add(signature)
+
+        if payload.duplicate_mode == "check" and duplicate_indices:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "duplicate_expenses",
+                    "message": "Matching expenses already exist. Choose whether to keep duplicates or skip them.",
+                    "duplicate_count": len(duplicate_indices),
+                    "duplicate_indices": duplicate_indices,
+                },
+            )
+
+        for txn, is_duplicate in checked_transactions:
+            db.add(Expense(
+                user_id=current_user.id,
+                title=txn.description[:255],
+                amount=txn.amount,
+                category=txn.category,
+                expense_date=txn.date,
+                note=(
+                    "Imported from bank statement (duplicate)"
+                    if is_duplicate
+                    else "Imported from bank statement"
+                ),
+            ))
+            saved += 1
 
     if skipped > 0 and saved == 0:
         raise HTTPException(

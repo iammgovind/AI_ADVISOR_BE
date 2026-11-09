@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -38,6 +39,7 @@ class BulkApproveRequest(BaseModel):
     upload_id: uuid.UUID
     approved: list[ApproveTransaction]
     rejected_indices: list[int]
+    duplicate_mode: Literal["check", "skip", "allow"] = "skip"
 
 
 class BulkApproveResult(BaseModel):

@@ -7,6 +7,7 @@ from app.models.budget import Budget
 from app.models.expense import Expense
 from app.models.goal import Goal, GoalStatus
 from app.models.investment import Investment, InvestmentStatus
+from app.models.user import User
 
 
 def _get_risk_profile(db: Session, user_id) -> dict:
@@ -148,7 +149,67 @@ def _score_risk(profile: dict) -> dict:
     return {"total_score": score, "breakdown": breakdown}
 
 
-def _determine_risk_level(score: int, profile: dict) -> dict:
+def _age_band(age: int) -> str:
+    if age <= 25:
+        return "25_and_under"
+    if age <= 35:
+        return "26_35"
+    if age <= 45:
+        return "36_45"
+    if age <= 55:
+        return "46_55"
+    return "56_plus"
+
+
+# (equity, debt, gold, cash) per risk appetite and age band; each row sums to 100
+_ALLOCATION_TABLE: dict[str, dict[str, tuple[int, int, int, int]]] = {
+    "aggressive": {
+        "25_and_under": (80, 5, 10, 5),
+        "26_35": (75, 10, 10, 5),
+        "36_45": (65, 15, 10, 10),
+        "46_55": (50, 25, 15, 10),
+        "56_plus": (35, 40, 15, 10),
+    },
+    "moderate": {
+        "25_and_under": (65, 15, 10, 10),
+        "26_35": (60, 20, 10, 10),
+        "36_45": (50, 25, 12, 13),
+        "46_55": (40, 35, 15, 10),
+        "56_plus": (30, 45, 15, 10),
+    },
+    "conservative": {
+        "25_and_under": (45, 30, 10, 15),
+        "26_35": (40, 35, 10, 15),
+        "36_45": (35, 40, 10, 15),
+        "46_55": (25, 50, 10, 15),
+        "56_plus": (20, 55, 10, 15),
+    },
+}
+
+_SHIFT = 5
+
+
+def _personalized_allocation(age: int, risk_appetite: str, profile: dict) -> tuple[dict, list[str]] | None:
+    """Age + risk appetite base allocation, adjusted for the user's current finances."""
+    row = _ALLOCATION_TABLE.get(risk_appetite, {}).get(_age_band(age))
+    if row is None:
+        return None
+    equity, debt, gold, cash = row
+    adjustments: list[str] = []
+
+    if profile["budget_utilization"] > 100 and equity >= _SHIFT:
+        equity -= _SHIFT
+        cash += _SHIFT
+        adjustments.append(f"Spending is over budget: moved {_SHIFT}% from equity to cash")
+    if profile["has_high_risk_assets"] and not profile["has_low_risk_assets"] and equity >= _SHIFT:
+        equity -= _SHIFT
+        debt += _SHIFT
+        adjustments.append(f"Portfolio holds only high-risk assets: moved {_SHIFT}% from equity to debt")
+
+    return {"equity": equity, "debt": debt, "gold": gold, "cash": cash}, adjustments
+
+
+def _determine_risk_level(score: int, profile: dict, user: User | None = None) -> dict:
     if score >= 75:
         level = "aggressive"
         description = "You have strong financial discipline and active investment behavior. You can handle high-risk, high-return investments."
@@ -168,6 +229,18 @@ def _determine_risk_level(score: int, profile: dict) -> dict:
         allocation = {"equity": 20, "debt": 50, "gold": 10, "cash": 20}
         avoid = ["Direct stocks", "Crypto", "Small/Mid cap funds", "Leveraged products"]
 
+    allocation_basis = {"source": "risk_score"}
+    if user is not None and user.age is not None and user.risk_appetite:
+        personalized = _personalized_allocation(user.age, user.risk_appetite, profile)
+        if personalized:
+            allocation, adjustments = personalized
+            allocation_basis = {
+                "source": "age_and_risk_appetite",
+                "age": user.age,
+                "risk_appetite": user.risk_appetite,
+                "adjustments": adjustments,
+            }
+
     warnings = []
     if profile["budget_utilization"] > 100:
         warnings.append("Spending exceeds budget — reduce expenses before investing")
@@ -185,6 +258,7 @@ def _determine_risk_level(score: int, profile: dict) -> dict:
         "description": description,
         "suitable_investments": suitable_investments,
         "recommended_allocation": allocation,
+        "allocation_basis": allocation_basis,
         "warnings": warnings,
     }
 
@@ -192,7 +266,7 @@ def _determine_risk_level(score: int, profile: dict) -> dict:
 def assess_risk(db: Session, user_id) -> dict:
     profile = _get_risk_profile(db, user_id)
     scored = _score_risk(profile)
-    risk = _determine_risk_level(scored["total_score"], profile)
+    risk = _determine_risk_level(scored["total_score"], profile, db.get(User, user_id))
 
     return {
         "risk_score": scored["total_score"],
@@ -201,6 +275,7 @@ def assess_risk(db: Session, user_id) -> dict:
         "description": risk["description"],
         "suitable_investments": risk["suitable_investments"],
         "recommended_allocation": risk["recommended_allocation"],
+        "allocation_basis": risk["allocation_basis"],
         "warnings": risk["warnings"],
         "profile_summary": {
             "monthly_expense": profile["monthly_expense"],

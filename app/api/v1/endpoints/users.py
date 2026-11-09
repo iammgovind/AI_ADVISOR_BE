@@ -31,6 +31,10 @@ def update_me(
         current_user.hashed_password = hash_password(payload.password)
     if payload.monthly_income is not None:
         current_user.monthly_income = payload.monthly_income
+    if payload.date_of_birth is not None:
+        current_user.date_of_birth = payload.date_of_birth
+    if payload.risk_appetite is not None:
+        current_user.risk_appetite = payload.risk_appetite
     db.commit()
     db.refresh(current_user)
     return current_user
