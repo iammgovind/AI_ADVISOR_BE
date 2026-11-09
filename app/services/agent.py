@@ -92,11 +92,48 @@ def _build_financial_profile(db: Session, user_id) -> dict:
         t = inv.investment_type.value
         inv_by_type[t] = inv_by_type.get(t, 0) + float(inv.quantity) * float(inv.current_price)
 
+    holdings = [
+        {
+            "name": i.name,
+            "type": i.investment_type.value,
+            "quantity": float(i.quantity),
+            "buy_price": float(i.buy_price),
+            "current_price": float(i.current_price),
+            "current_value": round(float(i.quantity) * float(i.current_price), 2),
+            "profit_loss": round(float(i.quantity) * (float(i.current_price) - float(i.buy_price)), 2),
+        }
+        for i in investments[:20]
+    ]
+
+    # this month's budget vs actual per category
+    month_by_cat = {
+        r[0]: float(r[1])
+        for r in db.execute(
+            select(Expense.category, func.sum(Expense.amount))
+            .where(
+                Expense.user_id == user_id,
+                extract("year", Expense.expense_date) == year,
+                extract("month", Expense.expense_date) == month,
+            )
+            .group_by(Expense.category)
+        ).all()
+    }
+    budget_vs_actual = [
+        {
+            "category": b.category.value,
+            "budget": float(b.limit_amount),
+            "spent": month_by_cat.get(b.category, 0),
+            "over_budget": month_by_cat.get(b.category, 0) > float(b.limit_amount),
+        }
+        for b in budgets
+    ]
+
     return {
         "monthly_expense": float(monthly_expense),
         "total_budget": total_budget,
         "budget_utilization_pct": round((float(monthly_expense) / total_budget) * 100, 1) if total_budget > 0 else 0,
         "top_expense_categories": top_categories,
+        "budget_vs_actual": budget_vs_actual,
         "active_goals": goals_data,
         "portfolio": {
             "total_invested": round(total_invested, 2),
@@ -105,6 +142,7 @@ def _build_financial_profile(db: Session, user_id) -> dict:
             "profit_loss_pct": round((portfolio_pl / total_invested) * 100, 2) if total_invested > 0 else 0,
             "by_type": inv_by_type,
             "total_holdings": len(investments),
+            "holdings": holdings,
         },
     }
 
